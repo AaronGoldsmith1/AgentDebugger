@@ -13,6 +13,8 @@ import {
   setExecutionControl,
   startSession,
   stepSession,
+  setFilesystemBackend,
+  setGithubBackend,
   updateBreakpoints,
 } from "./api.js";
 import AgentModePanel from "./components/AgentModePanel.jsx";
@@ -22,6 +24,8 @@ import CompleteSummary from "./components/CompleteSummary.jsx";
 import DebuggerControlBar from "./components/DebuggerControlBar.jsx";
 import ErrorBanner from "./components/ErrorBanner.jsx";
 import EventDetailsPanel from "./components/EventDetailsPanel.jsx";
+import FilesystemBackendPanel from "./components/FilesystemBackendPanel.jsx";
+import GithubBackendPanel from "./components/GithubBackendPanel.jsx";
 import PausedBanner from "./components/PausedBanner.jsx";
 import PausedInspectorCard from "./components/PausedInspectorCard.jsx";
 import StatusBanner from "./components/StatusBanner.jsx";
@@ -44,6 +48,9 @@ export default function App() {
   const [breakpoints, setBreakpoints] = useState(DEFAULT_BREAKPOINTS);
   const [executionControl, setExecutionControlState] = useState("run");
   const [agentMode, setAgentMode] = useState("scripted");
+  const [filesystemBackend, setFilesystemBackendState] = useState("mock");
+  const [githubBackend, setGithubBackendState] = useState("mock");
+  const [mcpStatus, setMcpStatus] = useState({ available: false, error: null });
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [selectedEventIndex, setSelectedEventIndex] = useState(-1);
   const [error, setError] = useState(null);
@@ -79,7 +86,12 @@ export default function App() {
 
   useEffect(() => {
     getHealth()
-      .then(() => setApiOnline(true))
+      .then((data) => {
+        setApiOnline(true);
+        if (data.githubMcp) {
+          setMcpStatus(data.githubMcp);
+        }
+      })
       .catch(() => {
         setApiOnline(false);
         setError("Backend API is unreachable. Start it with: cd backend && npm run dev");
@@ -96,6 +108,12 @@ export default function App() {
         setBreakpoints(data.breakpoints);
         if (data.executionControl) {
           setExecutionControlState(data.executionControl);
+        }
+        if (data.filesystemBackend) {
+          setFilesystemBackendState(data.filesystemBackend);
+        }
+        if (data.githubBackend) {
+          setGithubBackendState(data.githubBackend);
         }
         setApiOnline(true);
       } catch (err) {
@@ -229,6 +247,8 @@ export default function App() {
           breakpoints,
           agentMode,
           executionControl,
+          filesystemBackend,
+          githubBackend,
         });
         id = created.sessionId;
         setSessionId(id);
@@ -337,6 +357,34 @@ export default function App() {
     }
   }
 
+  async function handleFilesystemBackendChange(backend) {
+    setFilesystemBackendState(backend);
+    if (!sessionId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await setFilesystemBackend(sessionId, backend);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleGithubBackendChange(backend) {
+    setGithubBackendState(backend);
+    if (!sessionId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await setGithubBackend(sessionId, backend);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleBreakpointChange(key, value) {
     const next = { ...breakpoints, [key]: value };
     setBreakpoints(next);
@@ -361,6 +409,9 @@ export default function App() {
   const canReset = Boolean(sessionId) && !agentRunning;
   const showPaused = session?.status === "paused";
   const showComplete = session?.status === "complete";
+  const activeFilesystemBackend =
+    session?.filesystemBackend ?? filesystemBackend;
+  const activeGithubBackend = session?.githubBackend ?? githubBackend;
   const canStepBack =
     selectedEventIndex > 0 || (selectedEventIndex < 0 && events.length > 1);
   const canStepForward =
@@ -403,6 +454,18 @@ export default function App() {
           <AgentModePanel
             agentMode={agentMode}
             onChange={setAgentMode}
+            disabled={agentRunning}
+          />
+          <FilesystemBackendPanel
+            filesystemBackend={activeFilesystemBackend}
+            onChange={handleFilesystemBackendChange}
+            disabled={agentRunning}
+          />
+          <GithubBackendPanel
+            githubBackend={activeGithubBackend}
+            mcpAvailable={mcpStatus.available}
+            mcpError={mcpStatus.error}
+            onChange={handleGithubBackendChange}
             disabled={agentRunning}
           />
           <DebuggerControlBar

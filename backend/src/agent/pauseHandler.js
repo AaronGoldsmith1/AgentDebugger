@@ -2,9 +2,9 @@ import { shouldPause } from "../breakpoints/shouldPause.js";
 import {
   shouldPauseAfterTool,
 } from "../breakpoints/shouldPauseForStep.js";
+import { buildDiffPreview } from "../breakpoints/buildDiffPreview.js";
 import {
   appendToolMessage,
-  executeTool,
   pauseForLlmAfter,
   pauseForTool,
   pauseForToolAfter,
@@ -13,7 +13,7 @@ import {
 } from "./toolFlow.js";
 import { touchSession } from "../store/sessions.js";
 
-export function applyPauseEdits(session, body) {
+export async function applyPauseEdits(session, body) {
   const ctx = session.pauseContext;
   if (!ctx) return;
 
@@ -30,6 +30,10 @@ export function applyPauseEdits(session, body) {
   if (body.args != null && ctx.kind === "tool_before") {
     ctx.toolCall = { ...ctx.toolCall, args: body.args };
     session.pausedToolCall = ctx.toolCall;
+
+    if (ctx.toolCall.name === "filesystem.writeFile") {
+      session.diffPreview = await buildDiffPreview(session, ctx.toolCall);
+    }
   }
 
   if (body.result != null && ctx.kind === "tool_after") {
@@ -58,7 +62,7 @@ export async function resolvePause(session, mode) {
     });
 
     if (shouldPause(session, toolCall)) {
-      pauseForTool(session, toolCall);
+      await pauseForTool(session, toolCall);
       return;
     }
 
@@ -76,6 +80,7 @@ export async function resolvePause(session, mode) {
     }
 
     appendToolMessage(session, toolCall, result);
+    session.diffPreview = null;
     touchSession(session);
     return;
   }
@@ -85,6 +90,7 @@ export async function resolvePause(session, mode) {
     session.pausedToolCall = null;
     session.pauseContext = null;
     session.status = "running";
+    session.diffPreview = null;
 
     const result = await runToolOnly(session, toolCall);
     pushEvent(session, {

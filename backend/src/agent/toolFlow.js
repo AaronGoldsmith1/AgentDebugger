@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { buildDiffPreview } from "../breakpoints/buildDiffPreview.js";
 import { getPauseReason } from "../breakpoints/getPauseReason.js";
 import { touchSession } from "../store/sessions.js";
 import { runTool } from "../tools/runTool.js";
@@ -12,10 +13,21 @@ export function pushEvent(session, event) {
   touchSession(session);
 }
 
-export function pauseForTool(session, toolCall) {
+function clearDiffPreview(session) {
+  session.diffPreview = null;
+}
+
+export async function pauseForTool(session, toolCall) {
   session.status = "paused";
   session.pausedToolCall = toolCall;
   session.pauseContext = { kind: "tool_before", toolCall };
+
+  if (toolCall.name === "filesystem.writeFile") {
+    session.diffPreview = await buildDiffPreview(session, toolCall);
+  } else {
+    clearDiffPreview(session);
+  }
+
   pushEvent(session, {
     type: "breakpoint_hit",
     message: getPauseReason(session, toolCall),
@@ -55,10 +67,10 @@ export function pauseForToolAfter(session, toolCall, result) {
 }
 
 export async function runToolOnly(session, toolCall) {
-  const result = await runTool(toolCall);
+  const result = await runTool(toolCall, session);
   session.toolCallsExecuted += 1;
 
-  if (toolCall.name === "filesystem.readFile" && result.content) {
+  if (toolCall.name === "filesystem.readFile" && result.content != null) {
     session.fileCache[toolCall.args.path] = result.content;
   }
 
@@ -82,6 +94,7 @@ export async function executeTool(session, toolCall) {
     result,
   });
   appendToolMessage(session, toolCall, result);
+  clearDiffPreview(session);
   return result;
 }
 
@@ -122,6 +135,7 @@ export async function rejectPausedTool(session, reason) {
 
   session.pausedToolCall = null;
   session.pauseContext = null;
+  clearDiffPreview(session);
   session.status = "running";
   touchSession(session);
 }
@@ -141,6 +155,7 @@ export async function executeEditedTool(session, args) {
 
   session.pausedToolCall = null;
   session.pauseContext = null;
+  clearDiffPreview(session);
   session.status = "running";
 
   await executeTool(session, edited);

@@ -8,12 +8,21 @@ The app demonstrates how a developer can run an LLM-powered coding/API agent and
 
 The core idea is not to build a full Cursor replacement. It is to prototype a control layer that sits between an LLM agent and its tools.
 
-**Build strategy:** Mock tools and scripted events are **scaffolding** to ship the debugger shell quickly (MVP). Post-MVP:
+**Build strategy:** Mock tools and scripted events are **scaffolding** to ship the debugger shell quickly (MVP). Completed and remaining phases:
 
-* **Phase 2:** Real local filesystem + **in-app diff** when paused before a file write.
-* **Phase 2b:** Real GitHub via **GitHub MCP** (same tool surface you use at work); debugger intercepts before each MCP call.
-* **Phase 3 (stretch):** **State rewind** — step backward through agent execution, not just timeline inspection (see **State rewind** below).
-* Shell stays mocked until later.
+| Phase | Status | Focus |
+|-------|--------|--------|
+| **MVP** (Days 1–10) | ✅ Done | Breakpoints, stepping, live edit, transport bar |
+| **Phase 2** (Days 11–12) | ✅ Done | Real filesystem + in-app diff |
+| **Phase 2b** (Day 13) | ✅ Done | GitHub MCP interception |
+| **Phase 3** (Day 14) | **Next** | **`llm_before` pause** — edit prompts/messages before each LLM call |
+| **Phase 4** (Day 15) | Planned | **State rewind** — checkpoint/restore agent state (not just timeline browse) |
+| **Phase 5** (Day 16) | Planned | Presentation rehearsal (former Day 14) |
+| **Phase 6** (last) | Deferred | SSE instead of polling; export event trace |
+
+**Explicitly not planned:** sandboxed real `shell.run` — `shell.run` stays **mock** for the life of this prototype.
+
+**Innovation priorities (before presentation):** `llm_before` and **state rewind** go beyond AgentStepper’s forward-only stepping and are the main differentiators to build and demo before the Day 16 walkthrough.
 
 ## Tech Stack
 
@@ -23,9 +32,9 @@ Backend:
 * Express
 * OpenAI API
 * In-memory session store for MVP
-* Mock tools for MVP (GitHub + filesystem + shell)
-* Real local filesystem + diff UI in Phase 2 (post-MVP)
-* GitHub MCP client in Phase 2b (post-MVP)
+* Mock tools for MVP (GitHub + filesystem + shell mock only)
+* Real local filesystem + diff UI in Phase 2 ✅
+* GitHub MCP client in Phase 2b ✅
 
 Frontend:
 
@@ -108,25 +117,29 @@ The LLM proposes tool calls. The Express runtime receives those proposed tool ca
 * **Stepping mode** — pause after each atomic step (LLM turn, tool result); **Step** vs **Continue**
 * **Live edit at pause** — edit assistant text after LLM; edit tool args before run; edit tool result before feeding back to model (AgentStepper parity)
 
-### Nice to Have (MVP)
+### Nice to Have (last)
 
-* Server-Sent Events instead of polling
+* **Server-Sent Events** instead of polling (Phase 6 — do last)
 * Export event trace as JSON
 
-### Out of Scope for MVP
+### Out of Scope (permanent)
 
-* In-app diff view (Phase 2)
-* Real filesystem read/write (Phase 2)
-* GitHub MCP execution (Phase 2b)
+* In-app diff view (Phase 2) — ✅ implemented
+* Real filesystem read/write (Phase 2) — ✅ implemented
+* GitHub MCP execution (Phase 2b) — ✅ implemented
 * Real Cursor IDE integration
-* Arbitrary non-GitHub MCP servers (future)
-* Real shell execution — future phase
-* **State rewind** (undo agent state to a prior step) — post-MVP; MVP ⏮ only browses the timeline
+* Arbitrary non-GitHub MCP servers
+* **Real / sandboxed shell execution** — `shell.run` remains mock; not planned
 * Authentication
 * Persistent database
 * Multi-user support
 * Full codebase editing agent
 * Raw chain-of-thought display
+
+### Scheduled post-MVP (before presentation)
+
+* **`llm_before` pause** (Phase 3, Day 14) — edit `session.messages` before `callOpenAI`
+* **State rewind** (Phase 4, Day 15) — restore session snapshots; ⏮ rewinds agent state, not just timeline inspection
 
 ## Folder Structure
 
@@ -147,8 +160,12 @@ agent-debugger/
       breakpoints/
         shouldPause.js
         shouldPauseForStep.js
+        shouldPauseBeforeLlm.js
         getPauseReason.js
         buildDiffPreview.js
+      checkpoints/
+        snapshotSession.js
+        restoreSession.js
       tools/
         registry.js
         runTool.js
@@ -176,6 +193,7 @@ agent-debugger/
         EventDetailsPanel.jsx
         DebuggerControlBar.jsx
         PausedInspectorCard.jsx
+        PromptEditorCard.jsx
         DiffPanel.jsx
         StatusBanner.jsx
       styles.css
@@ -225,6 +243,7 @@ Request:
   "githubBackend": "mock",
   "breakpoints": {
     "afterPlan": true,
+    "pauseBeforeLlm": false,
     "pauseAfterLlm": false,
     "beforeFileWrite": true,
     "beforeGithubMutation": true,
@@ -360,6 +379,16 @@ Request examples:
 
 ```json
 {
+  "kind": "llm_before",
+  "messages": [
+    { "role": "system", "content": "You are a careful coding agent..." },
+    { "role": "user", "content": "Add durationSeconds to the video API." }
+  ]
+}
+```
+
+```json
+{
   "kind": "llm_after",
   "assistantContent": "I'll inspect the API model first, then search issues."
 }
@@ -380,6 +409,24 @@ Request examples:
 ```
 
 Does not execute the tool or advance the loop — only updates `pauseContext` / `pausedToolCall` / pending message append. User then hits Continue or Step.
+
+### `POST /sessions/:id/rewind` (Phase 4)
+
+Restore session to a prior checkpoint. Requires `status !== "running"`.
+
+Request:
+
+```json
+{ "eventId": "evt-uuid" }
+```
+
+or
+
+```json
+{ "checkpointIndex": 2 }
+```
+
+Response: updated session public shape; `status: "paused"` at restored boundary.
 
 ### `POST /sessions/:id/reject`
 
@@ -425,6 +472,7 @@ Use an in-memory `Map` for MVP.
   events: [],
   breakpoints: {
     afterPlan: true,
+    pauseBeforeLlm: false,
     pauseAfterLlm: false,
     beforeFileWrite: true,
     beforeGithubMutation: true,
@@ -440,6 +488,7 @@ Use an in-memory `Map` for MVP.
   githubBackend: "mock" | "mcp",
   fileCache: {},
   diffPreview: null,
+  checkpoints: [],
   scriptStep: 0,
   finalAnswer: null,
   createdAt: "...",
@@ -454,6 +503,9 @@ Use an in-memory `Map` for MVP.
 `pauseContext` when `status === "paused"`:
 
 ```js
+// Before callOpenAI (Phase 3)
+{ kind: "llm_before", messages: [ /* editable copy of session.messages */ ] }
+
 // After OpenAI returns (before tool runs or before final answer committed)
 { kind: "llm_after", assistantContent: "...", toolCalls: [...] }
 
@@ -665,11 +717,19 @@ Implement `shouldPauseForStep(session, stepKind)` alongside `shouldPause(session
 
 | `pauseContext.kind` | User can edit | On Continue/Step |
 |---------------------|---------------|------------------|
+| `llm_before` | Editable `session.messages` tail (system + history); optional task override | User edits context, then **Continue** → `callOpenAI` with edited messages |
 | `llm_after` | Assistant text (and optionally strip/change `tool_calls` JSON for advanced users) | Append edited assistant message to `session.messages`, then proceed to tool or final |
 | `tool_before` | Tool `args` (existing `edit-tool-call` / `PausedInspectorCard`) | `runTool` with edited args |
 | `tool_after` | Tool `result` JSON (simulate different tool output) | Append edited result as `role: "tool"` message |
 
-**Prompt editing (llm_before):** Optional stretch — pause **before** `callOpenAI` with editable `session.messages` tail. Defer to post-MVP unless time; `llm_after` covers most prompt-engineering demos.
+**`llm_before` (Phase 3 — priority):** Pause **before** `callOpenAI` with an editable message stack. Unlike `llm_after` (react to what the model said), `llm_before` lets the user **steer the next turn** — inject constraints, fix a bad user message, trim context, or add few-shot examples before the model runs. This is the most innovative edit surface: prompt engineering at the debugger, not in a separate chat UI.
+
+Triggers:
+
+* `executionControl === "step"` — always pause before each LLM call, or
+* Breakpoint checkbox **`pauseBeforeLlm`** in run mode (alongside `pauseAfterLlm`).
+
+On Continue/Step: run `callOpenAI(session.messages)` with edited history; no model call happens until user approves.
 
 ### UI: `DebuggerControlBar.jsx`
 
@@ -678,13 +738,14 @@ Shown when session is `paused` or `running` (disable Step when running).
 * **Continue** — `POST /resume` with `executionControl: "run"` (run until next semantic breakpoint).
 * **Step** — `POST /step` (only when `executionControl === "step"`).
 * **Run / Step toggle** — `POST /execution-control`.
-* **Transport bar (MVP):** ⏮ ▶ ⏸ ⏭ — play/pause/step forward plus timeline back. ⏮ / ← browse past events only; they do **not** rewind agent state (see **State rewind** post-MVP).
+* **Transport bar:** ⏮ ▶ ⏸ ⏭ — after Phase 4, ⏮ **rewinds agent state** to a checkpoint (not just timeline browse). Until then, ⏮ / ← browse past events only.
 * Optional: **Reject** (tool_before only) stays on inspector card.
 
 ### UI: `PausedInspectorCard.jsx`
 
 Replaces a tool-only card. Content depends on `pauseContext.kind`:
 
+* **`llm_before`:** editable message list (or JSON) for `session.messages`; show next action preview (“will call OpenAI with N messages”).
 * **`llm_after`:** textarea for assistant content; show proposed `tool_calls` read-only or editable JSON; no Reject (use edit + Step).
 * **`tool_before`:** existing tool card + `DiffPanel` when applicable; Continue / Reject / Edit.
 * **`tool_after`:** editable `result` JSON; Step to feed edited result into history.
@@ -692,7 +753,10 @@ Replaces a tool-only card. Content depends on `pauseContext.kind`:
 ### Agent loop changes (conceptual)
 
 ```js
-// Before callOpenAI — optional llm_before (stretch)
+// Before callOpenAI — llm_before (Phase 3)
+if (shouldPauseBeforeLlm(session)) {
+  return pause(session, { kind: "llm_before", messages: session.messages });
+}
 
 const response = await callOpenAI(session.messages);
 const normalized = normalizeOpenAIResponse(response);
@@ -715,7 +779,7 @@ if (session.executionControl === "step") {
 session.messages.push({ role: "tool", ... });
 ```
 
-Add optional breakpoint checkbox: **Pause after each LLM response** (`pauseAfterLlm`) for run mode without full stepping.
+Add optional breakpoint checkboxes: **Pause before each LLM call** (`pauseBeforeLlm`, Phase 3) and **Pause after each LLM response** (`pauseAfterLlm`) for run mode without full stepping.
 
 ### Scripted mode
 
@@ -975,6 +1039,7 @@ Checkboxes:
 
 * After plan generation
 * Pause after each LLM response (`pauseAfterLlm` — useful in run mode)
+* Pause before each LLM call (`pauseBeforeLlm` — Phase 3; edit input context)
 * Before file write
 * Before GitHub mutation
 * Before shell command
@@ -1023,6 +1088,7 @@ Run / Step toggle, **Continue**, **Step** buttons. Calls `/execution-control`, `
 
 Only visible when `session.status === "paused"`. Renders by `pauseContext.kind` (see **Stepping and live edit**):
 
+* **`llm_before`:** editable message stack (Phase 3)
 * **`llm_after`:** editable assistant text; proposed tool calls
 * **`tool_before`:** tool name, risk, editable args, optional `DiffPanel`, Reject
 * **`tool_after`:** editable tool result JSON
@@ -1602,27 +1668,66 @@ Goal:
 * **Phase 2:** `realFilesystem.js`, `WORKSPACE_ROOT`, path sandbox, `fileCache`, `buildDiffPreview`
 * `DiffPanel.jsx` on file-write pause
 
-### Day 12
+### Day 12 ✅
 
 * UI toggles: filesystem Mock | Real
-* Smoke-test read → diff → continue → write on local clone
-* README (workspace + diff behavior)
+* Smoke-test script: `npm run smoke:phase2` (read → diff → reset, dry run)
+* README: workspace + diff + smoke test
 
-### Day 13
+Goal:
 
-* **Phase 2b:** `githubMcpClient.js`, spawn GitHub MCP (stdio), `githubToolMap`
-* UI toggle GitHub Mock | MCP
-* Intercept → `search_issues` / `create_pull_request` via MCP after breakpoint
+* Phase 2 validated on local clone without surprise writes.
 
-### Day 14
+### Day 13 ✅
 
-* End-to-end: real file edit with diff, then real PR (or rehearse with GitHub mock if token blocked)
-* Presentation prep: 2-minute + 5-minute walkthrough
-* Practice full demo flow
+* **Phase 2b:** `githubMcpClient.js`, `githubToolMap.js`, MCP stdio spawn
+* `runTool` routes `github.*` to MCP when `githubBackend === "mcp"`
+* UI toggle GitHub Mock | MCP; `GET /health` reports MCP status
+* Breakpoints pause before MCP `search_issues` / `create_pull_request`
 
-### Post-MVP backlog (not scheduled)
+Goal:
 
-* **State rewind** — checkpoint/restore session at prior atomic steps; see **State rewind (post-MVP idea)** under Future phase.
+* Live GitHub via MCP after breakpoint approval (mock remains default for demos).
+
+### Day 14 — Phase 3: `llm_before` pause (priority)
+
+**Goal:** Pause and edit the message stack **before** each LLM call — steer the next turn without re-running the whole session.
+
+* `shouldPauseBeforeLlm(session)` + breakpoint **`pauseBeforeLlm`** (run mode)
+* Step mode: always pause at `llm_before` before each `callOpenAI`
+* `pauseContext.kind: "llm_before"` with editable `messages`
+* `POST /edit-paused` accepts `{ messages: [...] }` for `llm_before`
+* `resolvePause` for `llm_before` → `callOpenAI` → existing `llm_after` / tool flow
+* **`PromptEditorCard.jsx`** (or extend `PausedInspectorCard`) — message list editor with role labels
+* Scripted mode: emit same `llm_before` pause before scripted “LLM” beats when stepping
+* Demo talking point: “Edit what goes **into** the model, not just what comes out.”
+
+### Day 15 — Phase 4: State rewind
+
+**Goal:** ⏮ restores **agent state** to a prior checkpoint; user can branch from an earlier pause.
+
+* `checkpoints/snapshotSession.js` — snapshot at each atomic step boundary: `messages`, `events`, `toolCallsExecuted`, `scriptStep`, `fileCache`, `pauseContext`, `diffPreview`, `status`
+* `checkpoints/restoreSession.js` — restore from snapshot index or `eventId`
+* `POST /sessions/:id/rewind` — `{ eventId }` or `{ checkpointIndex }` → restore + `status: "paused"`
+* Real filesystem: optional per-checkpoint file content map or `git stash` / restore `fileCache` paths written since checkpoint (revert disk on rewind when `filesystemBackend === "real"`)
+* UI: ⏮ **Rewind agent** vs ← **Browse timeline** (browse stays read-only); confirm dialog before rewind
+* Scripted + OpenAI modes both honor checkpoints
+* Demo talking point: “Time-travel the agent trajectory — try a different tool result or prompt and continue.”
+
+See **State rewind (Phase 4)** below for full spec.
+
+### Day 16 — Presentation rehearsal (former Day 14)
+
+* End-to-end demo script: mock **or** real filesystem + diff + optional MCP
+* Highlight **`llm_before`** and **state rewind** as differentiators vs AgentStepper
+* 2-minute + 5-minute walkthrough; practice reset/reject/rewind flows
+* Export talking-point checklist in README
+
+### Phase 6 (last) — SSE + polish
+
+* Replace polling with **Server-Sent Events** on `GET /sessions/:id/stream` (or `/events/stream`)
+* Export event trace as JSON
+* Only after Phases 3–5 are stable — polling is fine until then
 
 ---
 
@@ -1786,12 +1891,144 @@ At PR pause, review title/body in UI; optional link to `github.com/{owner}/{repo
 * MCP tool schema drift vs `githubToolMap` → validate at startup with `listTools()`.
 * Do not bypass breakpoints for MCP calls — that would defeat the project thesis.
 
-### Future phase
+### Future / last
 
-* **Phase 3:** Real `shell.run` (tests, arbitrary commands) with strict sandbox — highest risk.
-* **State rewind (stretch):** True “step backward” through agent execution — restore `messages`, `events`, `fileCache`, `scriptStep`, and tool side effects to a prior checkpoint, then resume from there. Inspired by time-travel / reversible debugging; goes beyond MVP timeline scrubbing.
+* **Phase 6:** SSE instead of polling; export event trace as JSON
+* Arbitrary non-GitHub MCP servers (out of scope for this prototype)
 
-#### State rewind (post-MVP idea)
+---
+
+## Phase 3: `llm_before` pause (Day 14)
+
+**Goal:** Let the developer edit **`session.messages` before `callOpenAI`** — the highest-leverage prompt-engineering surface in a debugger.
+
+### Why this is priority
+
+| Pause kind | When | User edits |
+|------------|------|------------|
+| `llm_before` | Before model runs | **Input** — system prompt, user task, prior turns |
+| `llm_after` | After model runs | **Output** — assistant text before tool |
+| `tool_before` | Before tool runs | Tool args |
+| `tool_after` | After tool runs | Tool result |
+
+AgentStepper emphasizes forward stepping and editing at boundaries; **`llm_before` is less common in tooling** and maps directly to “fix the prompt, then run one step.”
+
+### Backend
+
+* `shouldPauseBeforeLlm.js`:
+
+```js
+export function shouldPauseBeforeLlm(session) {
+  return (
+    session.executionControl === "step" ||
+    session.breakpoints.pauseBeforeLlm
+  );
+}
+```
+
+* Default breakpoints add `pauseBeforeLlm: false` (step mode always pauses).
+* `pauseForLlmBefore(session)` → `pauseContext: { kind: "llm_before", messages: structuredClone(session.messages) }`
+* `resolvePause` for `llm_before`: apply edits from `edit-paused`, then `callOpenAI` / scripted LLM beat
+* OpenAI loop entry:
+
+```js
+if (shouldPauseBeforeLlm(session)) {
+  return pauseForLlmBefore(session);
+}
+const response = await callOpenAI(session.messages);
+```
+
+### API
+
+`POST /edit-paused` when `pauseContext.kind === "llm_before"`:
+
+```json
+{
+  "messages": [
+    { "role": "system", "content": "..." },
+    { "role": "user", "content": "..." }
+  ]
+}
+```
+
+### UI
+
+* **`PromptEditorCard.jsx`:** list of messages with role badges; edit `content` per row; add/remove user messages (optional v1: edit only, no add/remove)
+* Breakpoint panel: **Pause before each LLM call** (`pauseBeforeLlm`)
+* Status banner: “Paused before LLM — edit context, then Continue”
+
+### Definition of done
+
+* Step mode pauses at `llm_before` before every LLM turn (OpenAI + scripted).
+* User edits messages, Continue runs model with edited context.
+* Run mode + `pauseBeforeLlm` checkbox works without full stepping.
+
+---
+
+## Phase 4: State rewind (Day 15)
+
+**Problem:** Today ⏮ / ← only **inspects** past timeline events. Live session state keeps moving forward.
+
+**Goal:** Restore `messages`, `events`, `fileCache`, `scriptStep`, etc. to a prior atomic step and resume from there — [time-travel debugging](https://en.wikipedia.org/wiki/Time_travel_debugging) for agent trajectories.
+
+### Checkpoint model
+
+```js
+session.checkpoints = [
+  {
+    id: "cp-001",
+    eventId: "evt-uuid",      // timeline event at this boundary
+    label: "before tool: filesystem.writeFile",
+    createdAt: "...",
+    snapshot: {
+      status, messages, events, toolCallsExecuted, scriptStep,
+      scriptAwaitingTool, fileCache, breakpoints, executionControl,
+      agentMode, filesystemBackend, githubBackend,
+      // optional: filesOnDisk: { "README.md": "content at checkpoint" }
+    }
+  }
+];
+```
+
+* Push checkpoint after each atomic step completes (after tool message appended, after scripted LLM beat, etc.).
+* Cap in-memory checkpoints (e.g. last 50) for MVP.
+
+### `POST /sessions/:id/rewind`
+
+```json
+{ "eventId": "evt-uuid" }
+```
+
+or
+
+```json
+{ "checkpointIndex": 3 }
+```
+
+Response: restored `session` public shape; `status: "paused"` at that boundary with appropriate `pauseContext` reconstructed if paused mid-step.
+
+### Filesystem undo (real mode)
+
+When `filesystemBackend === "real"` and a write occurred after the checkpoint:
+
+* **MVP approach:** store `fileCache` content per path at checkpoint; on rewind, if file was written, restore previous content from checkpoint snapshot before resuming.
+* Document: user should use git for serious recovery; rewind is best-effort for demo.
+
+### UI
+
+* Transport **⏮** → “Rewind agent to selected event” (enabled when checkpoint exists for selection)
+* **←** → browse timeline only (unchanged)
+* Confirm: “Rewind discards N steps after this point?”
+
+### Definition of done
+
+* User selects a past event, clicks Rewind, session restores to that point.
+* User edits at restored pause and continues on a **new branch** (new events append; old branch discarded or kept in checkpoint history for inspect-only).
+* Works in scripted mode; OpenAI mode with checkpoints on tool/LLM boundaries.
+
+**Related:** AgentStepper supports forward stepping; **rewind + `llm_before`** together are the strongest demo story.
+
+#### State rewind (detailed sketch)
 
 **Problem:** MVP ⏮ / ← only selects a previous **timeline event** for inspection. The live session (`messages`, `pauseContext`, disk writes, `toolCallsExecuted`) keeps moving forward. Users cannot undo a bad tool result or “what if” branch from an earlier pause without restarting the session.
 
@@ -1799,14 +2036,10 @@ At PR pause, review title/body in UI; optional link to `github.com/{owner}/{repo
 
 **Sketch:**
 
-* On each atomic step boundary, snapshot session state: `messages`, `events`, `toolCallsExecuted`, `scriptStep`, `fileCache`, `pauseContext`, optional filesystem checkpoint.
-* `POST /sessions/:id/rewind` with `{ "eventId": "..." }` or `{ "stepIndex": N }` restores the snapshot and sets `status: "paused"` at that boundary.
-* Phase 2+ may require reverting real file writes (copy-on-write or git stash per checkpoint).
-* UI: ⏮ becomes “rewind agent to this step” when snapshots exist; distinguish from timeline-only browse mode.
-
-**Why post-MVP:** Needs checkpoint storage, idempotent tool semantics, and safe undo for filesystem/GitHub side effects. MVP transport bar + timeline inspection is enough to demo stepping and live edit.
-
-**Related:** AgentStepper supports forward stepping and conversation inspection; full rewind is a differentiator if implemented well.
+* On each atomic step boundary, snapshot session state (see Phase 4 checkpoint model).
+* `POST /sessions/:id/rewind` restores snapshot and sets `status: "paused"`.
+* Real filesystem: restore file content from checkpoint snapshot when rewinding past a write.
+* UI: ⏮ rewinds agent; ← still browses timeline read-only.
 
 ## Risk Management
 
@@ -1834,7 +2067,7 @@ Mitigation:
 * No routing.
 * No Redux.
 * No complex styling.
-* Use plain fetch and polling.
+* Use plain fetch and polling until **Phase 6** (SSE last).
 
 ### Third Biggest Risk
 
@@ -1869,6 +2102,23 @@ The project is demo-ready when:
 * User can **edit assistant text** at `llm_after` pause and **edit tool result** at `tool_after` pause.
 * Agent completes with final summary.
 * There is a clear explanation of how Phase 2b intercepts GitHub MCP calls (demo narrative).
+
+### Phase 3 (`llm_before`)
+
+* Step or `pauseBeforeLlm` pauses **before** `callOpenAI` with editable `session.messages`.
+* User edits context, Continue runs the model with updated input.
+* Demo narrative: steer the agent by editing prompts at the debugger, not after the fact.
+
+### Phase 4 (state rewind)
+
+* Checkpoints at atomic step boundaries; `POST /rewind` restores session state.
+* ⏮ rewinds agent to selected checkpoint; user can branch from an earlier pause.
+* Real filesystem: best-effort restore of file content from checkpoint.
+
+### Phase 5 (presentation-ready)
+
+* Full demo script including `llm_before`, rewind, diff, and optional MCP.
+* 2-min and 5-min walkthrough rehearsed.
 
 ### Phase 2 (real filesystem + diff)
 

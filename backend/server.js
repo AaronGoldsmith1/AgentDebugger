@@ -1,6 +1,10 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import {
+  getGithubMcpStatus,
+  initGithubMcp,
+} from "./src/mcp/githubMcpClient.js";
 import sessionsRouter from "./src/routes/sessions.js";
 
 dotenv.config();
@@ -16,7 +20,10 @@ app.use(
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    githubMcp: getGithubMcpStatus(),
+  });
 });
 
 app.use("/sessions", sessionsRouter);
@@ -28,6 +35,7 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Agent Debugger API listening on http://localhost:${PORT}`);
+  await initGithubMcp();
 });

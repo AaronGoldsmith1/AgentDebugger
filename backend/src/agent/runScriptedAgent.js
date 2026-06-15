@@ -13,10 +13,11 @@ import {
   runToolOnly,
 } from "./toolFlow.js";
 import {
+  buildWriteFileCall,
   CREATE_PR_CALL,
-  READ_FILE_CALL,
+  getReadFileCall,
+  getScriptedReadPath,
   SEARCH_ISSUES_CALL,
-  WRITE_FILE_CALL,
 } from "./scriptedSequence.js";
 import { resolvePause } from "./pauseHandler.js";
 
@@ -25,20 +26,20 @@ const STEP_DELAY_MS = 400;
 const PHASES = [
   {
     intro: "Starting Fox Local API task (scripted mode)",
-    llm: "I'll search existing issues, read the video response model, add durationSeconds, then open a mock PR.",
-    tool: SEARCH_ISSUES_CALL,
+    llm: "I'll search existing issues, read the target file, apply a demo edit, then open a mock PR.",
+    resolveTool: () => SEARCH_ISSUES_CALL,
   },
   {
-    llm: "Found a related issue. Reading internal/api/videos.go next.",
-    tool: READ_FILE_CALL,
+    llm: `Reading ${getScriptedReadPath()} from the workspace.`,
+    resolveTool: () => getReadFileCall(),
   },
   {
-    llm: "Adding durationSeconds to VideoResponse for backward-compatible metadata.",
-    tool: WRITE_FILE_CALL,
+    llm: "Applying a small demo edit to the file.",
+    resolveTool: (session) => buildWriteFileCall(session),
   },
   {
     llm: "File updated. Opening a mock pull request.",
-    tool: CREATE_PR_CALL,
+    resolveTool: () => CREATE_PR_CALL,
   },
 ];
 
@@ -54,7 +55,7 @@ async function runPhaseTool(session, toolCall) {
   });
 
   if (shouldPause(session, toolCall)) {
-    pauseForTool(session, toolCall);
+    await pauseForTool(session, toolCall);
     return false;
   }
 
@@ -76,6 +77,8 @@ async function runPhaseTool(session, toolCall) {
 }
 
 async function runPhase(session, phase, isFirst) {
+  const toolCall = phase.resolveTool(session);
+
   if (!session.scriptAwaitingTool) {
     if (isFirst && phase.intro) {
       pushEvent(session, { type: "task_started", message: phase.intro });
@@ -89,23 +92,24 @@ async function runPhase(session, phase, isFirst) {
     if (shouldPauseAfterLlm(session)) {
       pauseForLlmAfter(session, {
         assistantContent: phase.llm,
-        toolCall: phase.tool,
+        toolCall,
       });
       return false;
     }
   }
 
-  return runPhaseTool(session, phase.tool);
+  return runPhaseTool(session, toolCall);
 }
 
 function completeScriptedRun(session) {
   const doneMessage =
-    "Done. Added durationSeconds to VideoResponse and opened mock PR #456.";
+    session.filesystemBackend === "real"
+      ? `Done. Updated ${getScriptedReadPath()} and opened mock PR #456.`
+      : "Done. Added durationSeconds to VideoResponse and opened mock PR #456.";
   pushEvent(session, { type: "llm_response", message: doneMessage });
 
   session.status = "complete";
-  session.finalAnswer =
-    "Added durationSeconds to VideoResponse and opened mock PR #456.";
+  session.finalAnswer = doneMessage;
   session.pausedToolCall = null;
   session.pauseContext = null;
   session.scriptAwaitingTool = false;

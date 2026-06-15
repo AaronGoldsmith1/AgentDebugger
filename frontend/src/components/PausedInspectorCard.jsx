@@ -1,4 +1,13 @@
 import { useEffect, useState } from "react";
+import DiffPanel from "./DiffPanel.jsx";
+
+function parseProposedContent(argsJson) {
+  try {
+    return JSON.parse(argsJson).content;
+  } catch {
+    return undefined;
+  }
+}
 
 const TOOL_RISK = {
   "github.searchIssues": "low",
@@ -130,6 +139,13 @@ export default function PausedInspectorCard({
               className="code-textarea"
             />
           </label>
+
+          {toolCall.name === "filesystem.writeFile" && session.diffPreview && (
+            <DiffPanel
+              diffPreview={session.diffPreview}
+              proposedContent={parseProposedContent(argsJson)}
+            />
+          )}
 
           <label className="field-label">
             Reject reason

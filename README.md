@@ -10,12 +10,12 @@ Inspired by [AgentStepper](https://github.com/sola-st/AgentStepper): the model p
 
 ```bash
 cd backend
-cp .env.example .env   # optional: add OPENAI_API_KEY for OpenAI mode
+cp .env.example .env
 npm install
-npm run dev
+node server.js
 ```
 
-API runs at `http://localhost:3001`.
+API runs at `http://localhost:3001`. Use `node server.js` if `npm run dev` hits file-watcher limits.
 
 **Terminal 2 — frontend**
 
@@ -30,15 +30,55 @@ Open `http://localhost:5173`.
 ## Demo flow (scripted mode)
 
 1. Leave **Scripted demo** selected (no API key required).
-2. Click **Start agent**.
-3. Agent pauses at breakpoints (after plan, before file write, before GitHub PR).
-4. Use **▶ Continue** or transport controls to proceed; **Reject** to send feedback into the loop.
-5. Toggle **Step** mode to pause after each LLM response and tool result.
-6. Click **Reset demo** to clear the timeline and run again.
+2. Optional: **Filesystem → Real**, **GitHub → Mock** for local file diff demo.
+3. Click **Start agent**.
+4. Agent pauses at breakpoints (after plan, before file write, before GitHub PR).
+5. Use **▶ Continue** or transport controls; **Reject** to send feedback into the loop.
+6. **Reset demo** to clear the timeline and run again.
 
 ## OpenAI mode
 
 Set `OPENAI_API_KEY` in `backend/.env`. Switch agent mode to **OpenAI agent** before starting.
+
+## Real filesystem (Phase 2)
+
+```env
+WORKSPACE_ROOT=/absolute/path/to/your/cloned-repo
+SCRIPTED_READ_PATH=README.md
+SCRIPTED_WRITE_PATH=README.md
+```
+
+1. Set **Filesystem → Real** in the UI.
+2. Run scripted demo — reads/writes paths under your clone.
+3. At the **before file write** breakpoint, **DiffPanel** shows before vs proposed content.
+
+**Smoke test (dry run, no write):**
+
+```bash
+cd backend && node server.js
+# other terminal:
+npm run smoke:phase2
+```
+
+Paths are sandboxed under `WORKSPACE_ROOT`.
+
+## GitHub MCP (Phase 2b)
+
+```env
+GITHUB_TOKEN=ghp_...
+GITHUB_OWNER=your-user-or-org
+GITHUB_REPO=your-repo
+GITHUB_MCP_COMMAND=npx
+GITHUB_MCP_ARGS=-y,@modelcontextprotocol/server-github
+```
+
+1. Set **GitHub → MCP** in the UI (health check shows MCP status).
+2. Breakpoints still pause **before** `search_issues` / `create_pull_request`.
+3. Continue runs the real MCP call after approval.
+
+Use **Mock** for presentations without a token. `GET /health` returns `githubMcp.available`.
+
+**Note:** `create_pull_request` requires `head` to exist on GitHub — push a branch first for live PR demos.
 
 ## Controls
 
@@ -48,27 +88,22 @@ Set `OPENAI_API_KEY` in `backend/.env`. Switch agent mode to **OpenAI agent** be
 | ⏸ Pause | Active when paused; switches to Step mode when idle |
 | ⏭ | Step one atomic beat (Step mode) |
 | ⏮ | Browse previous timeline event (inspect only) |
-| Space | Play (when paused) |
-| ← / → | Timeline back / forward (→ steps agent in Step mode) |
-
-## Breakpoints
-
-- **After plan** — pause before the first tool call
-- **Pause after each LLM** — extra pause in Run mode
-- **Before file write** — pause before `filesystem.writeFile`
-- **Before GitHub mutation** — pause before PR creation
-- **Before shell command** — pause before shell tools
 
 ## Project structure
 
 ```
-backend/     Express API, agent loop, mock tools
-frontend/    React UI, timeline, debugger controls
+backend/     Express API, agent loop, mock + real tools, MCP client
+frontend/    React UI, timeline, debugger controls, diff panel
 plan.md      Full spec and phased roadmap
 ```
 
-## Post-MVP (see plan.md)
+## Deferred (see plan.md)
 
-- **Phase 2:** Real local filesystem + in-app diff
-- **Phase 2b:** GitHub MCP interception
-- **State rewind:** Checkpoint and restore agent state to prior steps
+| Phase | When | What |
+|-------|------|------|
+| **3** (Day 14) | Next | `llm_before` — edit messages before each LLM call |
+| **4** (Day 15) | After 3 | State rewind — checkpoint/restore agent state |
+| **5** (Day 16) | After 4 | Presentation rehearsal |
+| **6** | Last | SSE instead of polling; export event trace |
+
+**Not planned:** real/sandboxed `shell.run` (stays mock).

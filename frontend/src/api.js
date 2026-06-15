@@ -95,6 +95,30 @@ export async function setExecutionControl(sessionId, executionControl) {
   return parseJson(response);
 }
 
+export async function setFilesystemBackend(sessionId, filesystemBackend) {
+  const response = await fetch(
+    `${API_BASE}/sessions/${sessionId}/filesystem-backend`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filesystemBackend }),
+    }
+  );
+  return parseJson(response);
+}
+
+export async function setGithubBackend(sessionId, githubBackend) {
+  const response = await fetch(
+    `${API_BASE}/sessions/${sessionId}/github-backend`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ githubBackend }),
+    }
+  );
+  return parseJson(response);
+}
+
 export async function editPaused(sessionId, body) {
   const response = await fetch(`${API_BASE}/sessions/${sessionId}/edit-paused`, {
     method: "POST",

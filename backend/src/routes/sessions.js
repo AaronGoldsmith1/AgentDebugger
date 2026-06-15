@@ -110,6 +110,56 @@ router.post("/:id/execution-control", (req, res) => {
   res.json({ executionControl: session.executionControl });
 });
 
+router.post("/:id/filesystem-backend", (req, res) => {
+  const session = getSession(req.params.id);
+
+  if (!session) {
+    return res.status(404).json({ error: "Session not found" });
+  }
+
+  if (session.status === "running") {
+    return res
+      .status(409)
+      .json({ error: "Cannot change filesystem backend while running" });
+  }
+
+  const backend = req.body?.filesystemBackend;
+  if (backend !== "mock" && backend !== "real") {
+    return res
+      .status(400)
+      .json({ error: "filesystemBackend must be mock or real" });
+  }
+
+  session.filesystemBackend = backend;
+  touchSession(session);
+
+  res.json({ filesystemBackend: session.filesystemBackend });
+});
+
+router.post("/:id/github-backend", (req, res) => {
+  const session = getSession(req.params.id);
+
+  if (!session) {
+    return res.status(404).json({ error: "Session not found" });
+  }
+
+  if (session.status === "running") {
+    return res
+      .status(409)
+      .json({ error: "Cannot change GitHub backend while running" });
+  }
+
+  const backend = req.body?.githubBackend;
+  if (backend !== "mock" && backend !== "mcp") {
+    return res.status(400).json({ error: "githubBackend must be mock or mcp" });
+  }
+
+  session.githubBackend = backend;
+  touchSession(session);
+
+  res.json({ githubBackend: session.githubBackend });
+});
+
 router.post("/:id/start", (req, res) => {
   const session = getSession(req.params.id);
 
@@ -212,7 +262,7 @@ router.post("/:id/reject", async (req, res) => {
   }
 });
 
-router.post("/:id/edit-paused", (req, res) => {
+router.post("/:id/edit-paused", async (req, res) => {
   const session = getSession(req.params.id);
 
   if (!session) {
@@ -223,11 +273,16 @@ router.post("/:id/edit-paused", (req, res) => {
     return res.status(409).json({ error: "Session is not paused" });
   }
 
-  applyPauseEdits(session, req.body ?? {});
-  res.json({
-    pauseContext: session.pauseContext,
-    pausedToolCall: session.pausedToolCall,
-  });
+  try {
+    await applyPauseEdits(session, req.body ?? {});
+    res.json({
+      pauseContext: session.pauseContext,
+      pausedToolCall: session.pausedToolCall,
+      diffPreview: session.diffPreview,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post("/:id/edit-tool-call", async (req, res) => {

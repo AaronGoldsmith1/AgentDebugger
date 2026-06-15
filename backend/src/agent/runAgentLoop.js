@@ -72,7 +72,7 @@ export async function runAgentLoop(session) {
       });
 
       if (shouldPause(session, toolCall)) {
-        pauseForTool(session, toolCall);
+        await pauseForTool(session, toolCall);
         return;
       }
 
